@@ -1,97 +1,87 @@
 import asyncio
 import json
-import os
+import requests
 from playwright.async_api import async_playwright
 
-SESSAO_DIR = "./sessao_axion"
+with open("telegram_config.json", "r") as f:
+    config = json.load(f)
+TOKEN = config["token"]
+CHAT_ID = config["chat_id"]
 
-async def configurar_plataforma(page):
-    print("\n🛠️ [Andax] Configurando a plataforma (Tempo e Valor)...")
-    try:
-        # 1. Clicar no tempo de 5 minutos (usando JavaScript para ignorar a viewport)
-        botao_5m = page.locator("span.timeframe-btn", has_text="5m").first
-        if await botao_5m.count() > 0:
-            await botao_5m.evaluate("el => el.click()")
-            print("✅ Tempo alterado para 5 minutos.")
-            await asyncio.sleep(1)
+url_api = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+
+def enviar_telegram(msg):
+    requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": msg})
+
+async def executar_trade(page, acao):
+    print(f"⚡ Executando {acao} na Axion...")
+    botao = page.locator("button.btn-call").first if acao == "COMPRAR" else page.locator("button.btn-put").first
         
-        # 2. Clicar no valor de 10
-        botao_10 = page.locator("button:has-text('10')").first
-        if await botao_10.count() > 0:
-            await botao_10.evaluate("el => el.click()")
-            print("✅ Valor alterado para $10.")
-            await asyncio.sleep(1)
+    if await botao.count() > 0:
+        await botao.evaluate("el => el.style.boxShadow = '0 0 20px 5px #00ff00'")
+        await asyncio.sleep(1)
+        await botao.click()
+        print(f"✅ Ordem de {acao} enviada! Aguardando 5 minutos...")
+        
+        await asyncio.sleep(305) # Espera 5 min + 5 seg (delay da Axion)
+        
+        # LÊ O RESULTADO NA TELA (Histórico da Axion)
+        try:
+            # Pega o texto do primeiro item do histórico
+            item_historico = await page.locator("div.flex.items-center.gap-2\\.5.py-1\\.5").first.inner_text()
+            print(f"Histórico lido: {item_historico}")
             
-    except Exception as e:
-        print(f"⚠️ Aviso: Não consegui alterar tempo/valor automaticamente: {e}")
+            if "+$" in item_historico:
+                enviar_telegram("RESULTADO: WIN")
+                print("🟢 GREEN! Avisando o Cérebro.")
+            elif "-$" in item_historico:
+                enviar_telegram("RESULTADO: LOSS")
+                print("🔴 RED! Avisando o Cérebro.")
+        except Exception as e:
+            print(f"⚠️ Erro ao ler histórico: {e}")
 
-async def vigiar_decisao(page):
-    ultima_decisao = None
-    em_operacao = False 
+async def vigiar_telegram(page):
+    print("👁️ [Andax Corpo] Escutando o Telegram...")
+    ultimo_id = None
     
     while True:
         try:
-            if os.path.exists("decisao_atual.json"):
-                with open("decisao_atual.json", "r") as f:
-                    dados = json.load(f)
-                    decisao = dados.get("decisao", "AGUARDAR")
+            params = {"timeout": 10}
+            if ultimo_id: params["offset"] = ultimo_id + 1
+                
+            resp = requests.get(url_api, params=params, timeout=15).json()
+            
+            if resp.get("result"):
+                for update in resp["result"]:
+                    ultimo_id = update["update_id"]
                     
-                if decisao != ultima_decisao and not em_operacao:
-                    print(f"\n🎯 Nova Decisão Detectada: {decisao}")
-                    ultima_decisao = decisao
-                    
-                    if decisao == "COMPRAR":
-                        botao = page.locator("button.btn-call").first
-                        if await botao.count() > 0:
-                            await botao.evaluate("el => el.style.boxShadow = '0 0 20px 5px #00ff00'")
-                            print("🟢 Botão ACIMA destacado! Executando em 2s...")
-                            await asyncio.sleep(2)
-                            await botao.evaluate("el => el.click()") # Força o clique
-                            print("✅ ORDEM DE COMPRA ENVIADA!")
-                            await botao.evaluate("el => el.style.boxShadow = 'none'")
-                            em_operacao = True
+                    if "message" in update and "text" in update["message"]:
+                        texto = update["message"]["text"]
+                        chat_id_msg = str(update["message"]["chat"]["id"])
+                        
+                        if chat_id_msg == str(CHAT_ID) and ("COMPRAR" in texto or "VENDER" in texto):
+                            acao = "COMPRAR" if "COMPRAR" in texto else "VENDER"
+                            await executar_trade(page, acao)
                             
-                    elif decisao == "VENDER":
-                        botao = page.locator("button.btn-put").first
-                        if await botao.count() > 0:
-                            await botao.evaluate("el => el.style.boxShadow = '0 0 20px 5px #ff0000'")
-                            print("🔴 Botão ABAIXO destacado! Executando em 2s...")
-                            await asyncio.sleep(2)
-                            await botao.evaluate("el => el.click()") # Força o clique
-                            print("✅ ORDEM DE VENDA ENVIADA!")
-                            await botao.evaluate("el => el.style.boxShadow = 'none'")
-                            em_operacao = True
-
-                if em_operacao:
-                    await asyncio.sleep(310) # Espera 5 minutos + 10s
-                    print("⏱️ Tempo de trade (5m) concluído. Liberando nova operação...")
-                    em_operacao = False
-                    ultima_decisao = None 
-                    
-        except Exception as e:
+        except Exception:
             pass
             
-        await asyncio.sleep(2)
+        await asyncio.sleep(3)
 
 async def main():
     async with async_playwright() as p:
-        print("🤖 [Andax Corpo] Abrindo a Axion Trade...")
-        # Aumentando a janela para 1920x1080 para caber tudo na tela
         context = await p.chromium.launch_persistent_context(
-            user_data_dir=SESSAO_DIR, headless=False, viewport={"width": 1920, "height": 1080}
+            user_data_dir="./sessao_axion", headless=False, viewport={"width": 1920, "height": 1080}
         )
         page = context.pages[0]
-        await page.goto("https://axion-trade.com/trade") 
+        await page.goto("https://axion-trade.com/trade")
         
-        print("\n⚠️ AÇÃO NECESSÁRIA:")
-        print("1. Se não estiver logado, faça o login.")
-        print("2. Vá para a tela de trade.")
-        input("3. Pressione ENTER quando estiver na tela...")
+        input("1. Faça login na Axion.\n2. Aperte ENTER para o robô assumir...")
         
-        await configurar_plataforma(page)
+        await page.locator("span.timeframe-btn", has_text="5m").first.evaluate("el => el.click()")
+        await page.locator("button:has-text('10')").first.evaluate("el => el.click()")
         
-        print("\n👁️ [Andax] Vigilância ativada. Aguardando sinais do cérebro...")
-        await vigiar_decisao(page)
+        await vigiar_telegram(page)
 
 if __name__ == "__main__":
     asyncio.run(main())
