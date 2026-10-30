@@ -1,20 +1,17 @@
 import streamlit as st
 import requests
-import json
 import time
 
 st.set_page_config(page_title="Andax Trader", page_icon="🤖", layout="centered")
 st.title("🤖 Andax Trader - Painel Live")
 st.markdown("Conectado à Nuvem via Telegram em tempo real.")
 
-# Carrega o token do telegram_config.json
+# Lê as credenciais dos Secrets do Streamlit
 try:
-    with open("telegram_config.json", "r") as f:
-        config = json.load(f)
-    TOKEN = config["token"]
-    CHAT_ID = config["chat_id"]
-except:
-    st.error("Arquivo telegram_config.json não encontrado ou inválido.")
+    TOKEN = st.secrets["TELEGRAM_TOKEN"]
+    CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
+except Exception as e:
+    st.error("Erro ao carregar as credenciais do Telegram. Verifique os Secrets no Streamlit Cloud.")
     st.stop()
 
 url_api = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
@@ -43,6 +40,6 @@ while True:
                 else:
                     st.write(f"📩 **{ultima_msg}**")
     except Exception as e:
-        pass # Ignora timeouts
+        pass 
         
     time.sleep(3)
