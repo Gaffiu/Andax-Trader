@@ -1,0 +1,8 @@
+.env
+.venv/
+sessao_axion/
+sessao_polarium/
+chroma_db/
+__pycache__/
+*.pdf
+livros/
