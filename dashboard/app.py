@@ -1,34 +1,48 @@
 import streamlit as st
+import requests
 import json
-import os
 import time
 
 st.set_page_config(page_title="Andax Trader", page_icon="🤖", layout="centered")
-st.title("🤖 Andax Trader - Painel")
-st.markdown("Acompanhe as decisões da IA em tempo real.")
+st.title("🤖 Andax Trader - Painel Live")
+st.markdown("Conectado à Nuvem via Telegram em tempo real.")
 
+# Carrega o token do telegram_config.json
+try:
+    with open("telegram_config.json", "r") as f:
+        config = json.load(f)
+    TOKEN = config["token"]
+    CHAT_ID = config["chat_id"]
+except:
+    st.error("Arquivo telegram_config.json não encontrado ou inválido.")
+    st.stop()
+
+url_api = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
 placeholder = st.empty()
 
+ultimo_id = None
 while True:
-    if os.path.exists("decisao_atual.json"):
-        with open("decisao_atual.json", "r") as f:
-            try:
-                dados = json.load(f)
-                decisao = dados.get("decisao", "AGUARDAR")
-                justificativa = dados.get("justificativa", "")
-                
-                with placeholder.container():
-                    if decisao == "COMPRAR":
-                        st.success(f"📈 SINAL: **COMPRAR**")
-                    elif decisao == "VENDER":
-                        st.error(f"📉 SINAL: **VENDER**")
-                    else:
-                        st.warning(f"⏳ SINAL: **AGUARDAR**")
-                        
-                    st.write(f"**Justificativa da IA:** {justificativa}")
-            except:
-                st.info("Lendo dados...")
-    else:
-        st.info("Aguardando o Cérebro gerar a primeira decisão...")
+    try:
+        params = {"timeout": 5, "limit": 5}
+        resp = requests.get(url_api, params=params, timeout=10).json()
         
-    time.sleep(2)
+        if resp.get("result"):
+            msgs = resp["result"]
+            ultima_msg = msgs[-1]["message"]["text"]
+            
+            with placeholder.container():
+                if "SINAL: COMPRAR" in ultima_msg:
+                    st.success(f"📈 **{ultima_msg}**")
+                elif "SINAL: VENDER" in ultima_msg:
+                    st.error(f"📉 **{ultima_msg}**")
+                elif "RESULTADO: WIN" in ultima_msg:
+                    st.balloons()
+                    st.info(f"🟢 **{ultima_msg}**")
+                elif "RESULTADO: LOSS" in ultima_msg:
+                    st.warning(f"🔴 **{ultima_msg}**")
+                else:
+                    st.write(f"📩 **{ultima_msg}**")
+    except Exception as e:
+        pass # Ignora timeouts
+        
+    time.sleep(3)
