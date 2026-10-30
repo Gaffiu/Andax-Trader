@@ -1,10 +1,5 @@
 websockets
-ollama
-chromadb
 pandas
-playwright
-streamlit
 requests
-sentence-transformers
-langchain-community
-pypdf
+python-dotenv
+groq
